@@ -1,0 +1,44 @@
+{
+    "name": "elliotputt/laravel-ai-onboarding",
+    "description": "A Laravel package for AI-powered onboarding flows with configurable field extraction - pure library with no web routes",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Elliot Putt",
+            "email": "elliot@example.com"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "laravel/framework": "^10.0|^11.0",
+        "prism-ai/prism": "^1.0",
+        "illuminate/support": "^10.0|^11.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0",
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "ElliotPutt\\LaravelAiOnboarding\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "ElliotPutt\\LaravelAiOnboarding\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "ElliotPutt\\LaravelAiOnboarding\\LaravelAiOnboardingServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+} 
