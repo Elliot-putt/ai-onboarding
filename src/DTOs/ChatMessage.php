@@ -13,7 +13,7 @@ class ChatMessage
 
     public static function make(string $role, string $content, ?string $sessionId = null): self
     {
-        return new self($role, $content, now()->toISOString(), $sessionId);
+        return new self($role, $content, date('c'), $sessionId);
     }
 
     public function toArray(): array

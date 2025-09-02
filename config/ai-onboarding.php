@@ -22,6 +22,12 @@ return [
             'api_key' => env('ANTHROPIC_API_KEY'),
             'model' => env('ANTHROPIC_MODEL', 'claude-3-sonnet-20240229'),
         ],
+        'gemini' => [
+            'driver' => 'gemini',
+            'api_key' => env('GEMINI_API_KEY'),
+            'model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
+            'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
+        ],
         'ollama' => [
             'driver' => 'ollama',
             'base_url' => env('OLLAMA_BASE_URL', 'http://localhost:11434'),

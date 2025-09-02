@@ -2,9 +2,10 @@
 
 namespace ElliotPutt\LaravelAiOnboarding;
 
-use Prism\Prism;
-use Prism\Contracts\Client;
+use Prism\Prism\Prism;
+use Prism\Prism\Enums\Provider;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Session;
 use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingField;
 use ElliotPutt\LaravelAiOnboarding\DTOs\ChatMessage;
 use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingResult;
@@ -12,35 +13,90 @@ use ElliotPutt\LaravelAiOnboarding\Collections\OnboardingFieldCollection;
 
 class OnboardingAgent
 {
-    protected static array $conversationHistory = [];
-    protected static array $extractedFields = [];
-    protected static array $fieldDefinitions = [];
-    protected static ?string $currentSessionId = null;
+
+
+    public static function setFields(array $fields , ?string $sessionId = null): void
+    {
+        if(!$sessionId){
+            $sessionId = Session::get("onboarding_current_session_id");
+        }
+        if ($sessionId) {
+            Session::put("onboarding_fields_" . $sessionId, $fields);
+        }
+    }
+    private static function getSetFields(?string $sessionId = null): array
+    {
+        if (!$sessionId) {
+            $sessionId = Session::get("onboarding_current_session_id");
+        }
+
+        if (!$sessionId) {
+            return [];
+        }
+
+        return Session::get("onboarding_fields_" . $sessionId, []);
+    }
 
     /**
      * Start a new onboarding session
      */
-    public static function startSession(?string $sessionId = null): string
+    public static function startSession(?string $sessionId = null): array
     {
-        $sessionId = $sessionId ?? Str::uuid()->toString();
-        static::$currentSessionId = $sessionId;
-        static::$conversationHistory[$sessionId] = [];
-        static::$extractedFields[$sessionId] = [];
-        
-        return $sessionId;
+        // 1. Generate UUID if no sessionId provided
+        if (!$sessionId) {
+            $sessionId = (string) Str::uuid();
+        }
+
+        $fields = self::getSetFields($sessionId);
+
+        if(empty($fields)){
+            return  throw new \Exception('No fields set. Please set fields before starting a session.');
+        }
+
+        // Set current session ID
+        Session::put("onboarding_current_session_id", $sessionId);
+
+        // Initialize conversation history and extracted fields arrays in session
+        Session::put("onboarding_conversation_{$sessionId}", []);
+        Session::put("onboarding_extracted_fields_{$sessionId}", []);
+
+        // 2. Start a new chat with Prism with their configured model and give the instructions
+        $aiInstructions = self::getAIInstructions();
+        $prismData = self::getPrismClient();
+        $provider = $prismData['provider'];
+        $model = $prismData['model'];
+
+        // 3. ask the ai model to start the conversation
+        $response = Prism::text()
+            ->using($provider, $model)
+            ->withSystemPrompt($aiInstructions)
+            ->withPrompt('Please ask the first question. be friendly and engaging.')
+            ->asText();
+
+        $firstMessage = $response->text;
+
+        $firstField = $fields[0] ?? null;
+        if ($firstField) {
+            Session::put("onboarding_current_field_{$sessionId}", $firstField);
+            Session::put("onboarding_last_question_{$sessionId}", 0);
+        }
+
+        return [
+            'success' => true,
+            'session_id' => $sessionId,
+            'first_message' => $firstMessage
+        ];
     }
 
+
+
     /**
-     * Set the fields you want extracted from the conversation
-     * Accepts various formats for flexibility
+     * Get the initial AI message to start the conversation
      */
-    public static function setFields(array|OnboardingFieldCollection $fields): void
+    public static function getInitialMessage(?string $sessionId = null): ChatMessage
     {
-        if ($fields instanceof OnboardingFieldCollection) {
-            static::$fieldDefinitions = $fields->toArray();
-        } else {
-            static::$fieldDefinitions = OnboardingFieldCollection::make($fields)->toArray();
-        }
+        // TODO: Implement initial message logic
+        return new ChatMessage('assistant', '', $sessionId);
     }
 
     /**
@@ -48,24 +104,69 @@ class OnboardingAgent
      */
     public static function chat(string $message, ?string $sessionId = null): ChatMessage
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        
         if (!$sessionId) {
-            throw new \Exception('No active session. Call startSession() first.');
+            $sessionId = Session::get("onboarding_current_session_id");
         }
 
-        // Add user message to history
-        $userMessage = ChatMessage::make('user', $message, $sessionId);
-        static::$conversationHistory[$sessionId][] = $userMessage;
+        if (!$sessionId) {
+            throw new \Exception('No active session. Please start a session first.');
+        }
 
-        // Get AI response
-        $aiResponse = static::getAIResponse($sessionId);
-        
-        // Add AI response to history
-        $assistantMessage = ChatMessage::make('assistant', $aiResponse, $sessionId);
-        static::$conversationHistory[$sessionId][] = $assistantMessage;
+        // 1. grab the message which is the answer and assign the last asked question session key to it
+        $currentField = Session::get("onboarding_current_field_{$sessionId}");
+        if ($currentField) {
+            // Store the user's answer for the current field
+            Session::put("onboarding_extracted_fields_{$sessionId}.{$currentField}", $message);
+        }
 
-        return $assistantMessage;
+        // Add user message to conversation history
+        $conversation = Session::get("onboarding_conversation_{$sessionId}", []);
+        $conversation[] = [
+            'role' => 'user',
+            'content' => $message,
+            'timestamp' => now()->toISOString()
+        ];
+        Session::put("onboarding_conversation_{$sessionId}", $conversation);
+
+        // 2. ask the ai model the next question which will be the next field in the list
+        $fields = self::getSetFields($sessionId);
+        $currentQuestionIndex = Session::get("onboarding_last_question_{$sessionId}", 0);
+        $nextQuestionIndex = $currentQuestionIndex + 1;
+
+        if ($nextQuestionIndex < count($fields)) {
+            // There are more fields to ask
+            $nextField = $fields[$nextQuestionIndex];
+            Session::put("onboarding_current_field_{$sessionId}", $nextField);
+            Session::put("onboarding_last_question_{$sessionId}", $nextQuestionIndex);
+
+            // Get AI response for next question
+            $prismData = self::getPrismClient();
+            $provider = $prismData['provider'];
+            $model = $prismData['model'];
+
+            $aiInstructions = self::getAIInstructions();
+            $response = Prism::text()
+                ->using($provider, $model)
+                ->withSystemPrompt($aiInstructions)
+                ->withPrompt("The user answered: '{$message}' for the {$currentField} field. Now ask for the next field: {$nextField}. Be friendly and engaging.")
+                ->asText();
+
+            $aiMessage = $response->text;
+        } else {
+            // All fields completed
+            $aiMessage = "Thank you! I have all the information I need. Your onboarding is complete!";
+        }
+
+        // Add AI response to conversation history
+        $conversation = Session::get("onboarding_conversation_{$sessionId}", []);
+        $conversation[] = [
+            'role' => 'assistant',
+            'content' => $aiMessage,
+            'timestamp' => now()->toISOString()
+        ];
+        Session::put("onboarding_conversation_{$sessionId}", $conversation);
+
+        return new ChatMessage('assistant', $aiMessage, $sessionId);
     }
 
     /**
@@ -74,16 +175,8 @@ class OnboardingAgent
      */
     public static function addUserMessage(string $message, ?string $sessionId = null): ChatMessage
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        
-        if (!$sessionId) {
-            throw new \Exception('No active session. Call startSession() first.');
-        }
-
-        $userMessage = ChatMessage::make('user', $message, $sessionId);
-        static::$conversationHistory[$sessionId][] = $userMessage;
-
-        return $userMessage;
+        // TODO: Implement add user message logic
+        return new ChatMessage('user', $message, $sessionId);
     }
 
     /**
@@ -92,43 +185,28 @@ class OnboardingAgent
      */
     public static function addAssistantMessage(string $message, ?string $sessionId = null): ChatMessage
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        
-        if (!$sessionId) {
-            throw new \Exception('No active session. Call startSession() first.');
-        }
-
-        $assistantMessage = ChatMessage::make('assistant', $message, $sessionId);
-        static::$conversationHistory[$sessionId][] = $assistantMessage;
-
-        return $assistantMessage;
+        // TODO: Implement add assistant message logic
+        return new ChatMessage('assistant', $message, $sessionId);
     }
 
     /**
-     * Finish the onboarding and extract all fields
+     * Finish the onboarding and return all assigned fields
      */
-    public static function finish(?string $sessionId = null): OnboardingResult
+    public static function finish(?string $sessionId = null): array
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        
         if (!$sessionId) {
-            throw new \Exception('No active session. Call startSession() first.');
+            $sessionId = Session::get("onboarding_current_session_id");
         }
 
-        if (empty(static::$fieldDefinitions)) {
-            throw new \Exception('No fields defined. Call setFields() first.');
+        if (!$sessionId) {
+            throw new \Exception('No active session. Please start a session first.');
         }
 
-        // Extract fields using AI
-        $extractedFields = static::extractFieldsFromConversation($sessionId);
+        // Get all extracted fields from the session
+        $extractedFields = Session::get("onboarding_extracted_fields_{$sessionId}", []);
         
-        return OnboardingResult::make(
-            $sessionId,
-            $extractedFields,
-            static::getConversationSummary($sessionId),
-            count(static::$conversationHistory[$sessionId]),
-            static::$conversationHistory[$sessionId]
-        );
+        // Return simple key-value pairs
+        return $extractedFields;
     }
 
     /**
@@ -136,8 +214,8 @@ class OnboardingAgent
      */
     public static function getHistory(?string $sessionId = null): array
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        return static::$conversationHistory[$sessionId] ?? [];
+        // TODO: Implement get history logic
+        return [];
     }
 
     /**
@@ -145,8 +223,8 @@ class OnboardingAgent
      */
     public static function getExtractedFields(?string $sessionId = null): array
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        return static::$extractedFields[$sessionId] ?? [];
+        // TODO: Implement get extracted fields logic
+        return [];
     }
 
     /**
@@ -154,8 +232,8 @@ class OnboardingAgent
      */
     public static function getField(string $key, ?string $sessionId = null): mixed
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        return static::$extractedFields[$sessionId][$key] ?? null;
+        // TODO: Implement get field logic
+        return null;
     }
 
     /**
@@ -163,8 +241,8 @@ class OnboardingAgent
      */
     public static function hasField(string $key, ?string $sessionId = null): bool
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        return isset(static::$extractedFields[$sessionId][$key]);
+        // TODO: Implement has field logic
+        return false;
     }
 
     /**
@@ -172,12 +250,7 @@ class OnboardingAgent
      */
     public static function clearSession(?string $sessionId = null): void
     {
-        $sessionId = $sessionId ?? static::$currentSessionId;
-        
-        if ($sessionId) {
-            unset(static::$conversationHistory[$sessionId]);
-            unset(static::$extractedFields[$sessionId]);
-        }
+        // TODO: Implement clear session logic
     }
 
     /**
@@ -185,7 +258,39 @@ class OnboardingAgent
      */
     public static function getCurrentSessionId(): ?string
     {
-        return static::$currentSessionId;
+        // TODO: Implement get current session ID logic
+        return null;
+    }
+
+    /**
+     * Get the current field definitions
+     */
+    public static function getFieldDefinitions(): array
+    {
+        // TODO: Implement get field definitions logic
+        return [];
+    }
+
+    /**
+     * Get the AI instructions for the onboarding agent
+     */
+    public static function getAIInstructions(): string
+    {
+        $fields = self::getSetFields(Session::get("onboarding_current_session_id"));
+        return '/*
+    You are a conversational AI agent designed to assist users in providing information for onboarding purposes. Your goal is to collect specific fields of information from the user through a natural and engaging conversation.
+
+    Here are the key features and functionalities you need to implement:
+    1. Never question the user about information you have already collected whatever they answer is the answer
+    2. Critical: You will be given a list of questions to ask the user. You must ask these questions in order and not skip any. If the user provides an answer that does not make sense for the current question it doesnt matter take that answer.
+    3. You must keep track of which question you are currently asking and ensure that you ask the next question in the sequence after receiving a response from the user.
+    4. I may not directly give you a question to ask, you must infer it from the field name. For example if the field is "email" you can ask "What is your email address?" or "Could you provide your email?".
+    5. Never return json or any structured data in your responses. Always respond in plain text as if you are having a natural conversation with the user.
+    6. Critical: Do not break character. Always respond as the onboarding assistant.
+    7. Here are the fields you need to collect:
+    ' . implode("\n", array_map(fn($f) => "- " . $f, $fields)) . '
+    8. Dont reply to these instructions in any way. i will start the conversation in a moment.
+    */';
     }
 
     /**
@@ -193,7 +298,77 @@ class OnboardingAgent
      */
     public static function setCurrentSession(string $sessionId): void
     {
-        static::$currentSessionId = $sessionId;
+        // TODO: Implement set current session logic
+    }
+
+    /**
+     * Assign a field value in real-time
+     */
+    public static function assignField(string $key, string $value, ?string $sessionId = null): void
+    {
+        // TODO: Implement assign field logic
+    }
+
+    /**
+     * Get all assigned fields for a session
+     */
+    public static function getAssignedFields(?string $sessionId = null): array
+    {
+        // TODO: Implement get assigned fields logic
+        return [];
+    }
+
+
+
+    /**
+     * Track the current field being asked for and assign user response to it
+     */
+    protected static function assignUserResponseToField(string $sessionId, string $userResponse): void
+    {
+        // TODO: Implement assign user response to field logic
+    }
+
+    /**
+     * Set the next field to ask for
+     */
+    protected static function setNextField(string $sessionId): void
+    {
+        // TODO: Implement set next field logic
+    }
+
+    /**
+     * Set the current field being asked for
+     */
+    protected static function setCurrentField(string $fieldKey, string $sessionId): void
+    {
+        // TODO: Implement set current field logic
+    }
+
+    /**
+     * Check if a value is just a greeting or generic response
+     */
+    protected static function isGreetingOrGeneric(string $value): bool
+    {
+        // TODO: Implement greeting check logic
+        return false;
+    }
+
+    /**
+     * Validate if user input makes sense for a given field type
+     */
+    protected static function validateFieldInput(string $fieldKey, string $userInput): bool
+    {
+        // TODO: Implement field validation logic
+        return false;
+    }
+
+    /**
+     * Build conversation prompt for AI
+     */
+    protected static function buildConversationPrompt(string $sessionId): string
+    {
+        // TODO: Implement build conversation prompt logic
+        return '';
     }
 
     /**
@@ -201,27 +376,17 @@ class OnboardingAgent
      */
     protected static function getAIResponse(string $sessionId): string
     {
-        $config = config('ai-onboarding');
-        $model = $config['default_model'] ?? 'openai';
-        $modelConfig = $config['models'][$model] ?? [];
+        // TODO: Implement get AI response logic
+        return '';
+    }
 
-        try {
-            $prism = new Prism();
-            $client = $prism->client($modelConfig['driver'] ?? 'openai');
-            
-            // Build conversation context
-            $messages = static::buildConversationContext($sessionId);
-            
-            $response = $client->chat([
-                'model' => $modelConfig['model'] ?? 'gpt-4',
-                'messages' => $messages,
-                'max_tokens' => 1000,
-            ]);
-
-            return $response->choices[0]->message->content ?? 'I apologize, but I couldn\'t generate a response.';
-        } catch (\Exception $e) {
-            return 'I apologize, but I encountered an error: ' . $e->getMessage();
-        }
+    /**
+     * Format messages for Prism API
+     */
+    protected static function formatMessagesForPrism(string $sessionId): array
+    {
+        // TODO: Implement format messages for Prism logic
+        return [];
     }
 
     /**
@@ -229,22 +394,8 @@ class OnboardingAgent
      */
     protected static function buildConversationContext(string $sessionId): array
     {
-        $messages = [
-            [
-                'role' => 'system',
-                'content' => 'You are a helpful onboarding assistant. Ask relevant questions to gather information and be conversational. Keep responses concise but friendly.'
-            ]
-        ];
-
-        // Add conversation history
-        foreach (static::$conversationHistory[$sessionId] as $message) {
-            $messages[] = [
-                'role' => $message->role,
-                'content' => $message->content
-            ];
-        }
-
-        return $messages;
+        // TODO: Implement build conversation context logic
+        return [];
     }
 
     /**
@@ -252,66 +403,8 @@ class OnboardingAgent
      */
     protected static function extractFieldsFromConversation(string $sessionId): array
     {
-        $config = config('ai-onboarding');
-        $model = $config['default_model'] ?? 'openai';
-        $modelConfig = $config['models'][$model] ?? [];
-
-        try {
-            $prism = new Prism();
-            $client = $prism->client($modelConfig['driver'] ?? 'openai');
-            
-            // Build extraction prompt
-            $fieldKeys = array_map(fn($field) => $field['key'], static::$fieldDefinitions);
-            $fieldsList = implode(', ', $fieldKeys);
-            $extractionPrompt = "Based on our conversation, please extract the following information and return ONLY valid JSON: {$fieldsList}";
-            
-            $messages = [
-                [
-                    'role' => 'system',
-                    'content' => 'You are a data extraction specialist. Extract the requested information from the conversation and return ONLY valid JSON.'
-                ],
-                [
-                    'role' => 'user',
-                    'content' => $extractionPrompt
-                ]
-            ];
-
-            // Add conversation history
-            foreach (static::$conversationHistory[$sessionId] as $message) {
-                $messages[] = [
-                    'role' => $message->role,
-                    'content' => $message->content
-                ];
-            }
-
-            $response = $client->chat([
-                'model' => $modelConfig['model'] ?? 'gpt-4',
-                'messages' => $messages,
-                'max_tokens' => 500,
-            ]);
-
-            $content = $response->choices[0]->message->content ?? '{}';
-            
-            // Try to parse JSON response
-            $extracted = json_decode($content, true);
-            
-            if (json_last_error() === JSON_ERROR_NONE) {
-                static::$extractedFields[$sessionId] = $extracted;
-                return $extracted;
-            }
-
-            // Fallback: return empty fields
-            $fallbackFields = array_fill_keys($fieldKeys, '');
-            static::$extractedFields[$sessionId] = $fallbackFields;
-            return $fallbackFields;
-
-        } catch (\Exception $e) {
-            // Fallback: return empty fields
-            $fieldKeys = array_map(fn($field) => $field['key'], static::$fieldDefinitions);
-            $fallbackFields = array_fill_keys($fieldKeys, '');
-            static::$extractedFields[$sessionId] = $fallbackFields;
-            return $fallbackFields;
-        }
+        // TODO: Implement extract fields from conversation logic
+        return [];
     }
 
     /**
@@ -319,22 +412,50 @@ class OnboardingAgent
      */
     protected static function getConversationSummary(string $sessionId): array
     {
-        $history = static::$conversationHistory[$sessionId] ?? [];
-        
-        if (empty($history)) {
-            return [
-                'start_time' => null,
-                'end_time' => null,
-                'user_messages' => 0,
-                'ai_messages' => 0,
-            ];
+        // TODO: Implement get conversation summary logic
+        return [];
+    }
+
+    /**
+     * Get configured Prism client and model config
+     */
+    protected static function getPrismClient(): array
+    {
+        // Get AI configuration
+        $config = config('ai-onboarding');
+        $defaultModel = $config['default_model'] ?? 'openai';
+
+        if (!isset($config['models'][$defaultModel])) {
+            throw new \Exception("Model configuration for '{$defaultModel}' not found. Please check your ai-onboarding config.");
         }
-        
+
+        $modelConfig = $config['models'][$defaultModel];
+
+        // Map provider names to Provider enum values
+        $providerMap = [
+            'openai' => Provider::OpenAI,
+            'anthropic' => Provider::Anthropic,
+            'ollama' => Provider::Ollama,
+            'gemini' => Provider::Gemini,
+        ];
+
+        $provider = $providerMap[$defaultModel] ?? Provider::OpenAI;
+
         return [
-            'start_time' => $history[0]->timestamp ?? null,
-            'end_time' => end($history)->timestamp ?? null,
-            'user_messages' => count(array_filter($history, fn($m) => $m->isUser())),
-            'ai_messages' => count(array_filter($history, fn($m) => $m->isAssistant())),
+            'provider' => $provider,
+            'model' => $modelConfig['model']
         ];
     }
-} 
+
+    /*
+    You are a conversational AI agent designed to assist users in providing information for onboarding purposes. Your goal is to collect specific fields of information from the user through a natural and engaging conversation.
+
+    Here are the key features and functionalities you need to implement:
+    1. Never question the user about information you have already collected whatever they answer is the answer
+    2. Critical: You will be given a list of questions to ask the user. You must ask these questions in order and not skip any. If the user provides an answer that does not make sense for the current question it doesnt matter take that answer.
+    3. You must keep track of which question you are currently asking and ensure that you ask the next question in the sequence after receiving a response from the user.
+    4. I may not directly give you a question to ask, you must infer it from the field name. For example if the field is "email" you can ask "What is your email address?" or "Could you provide your email?".
+    5. Never return json or any structured data in your responses. Always respond in plain text as if you are having a natural conversation with the user.
+    6. Critical: Do not break character. Always respond as the onboarding assistant.
+    */
+}

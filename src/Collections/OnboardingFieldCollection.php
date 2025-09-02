@@ -12,7 +12,12 @@ class OnboardingFieldCollection extends Collection
         parent::__construct($items);
     }
 
-    public static function make(array $fields): self
+    public static function make($items = []): self
+    {
+        return new static($items);
+    }
+
+    public static function fromFields(array $fields): self
     {
         $collection = new self();
         
