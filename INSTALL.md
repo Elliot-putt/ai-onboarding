@@ -146,37 +146,40 @@ class OnboardingController extends Controller
 namespace App\Services;
 
 use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
-use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingField;
-use ElliotPutt\LaravelAiOnboarding\Collections\OnboardingFieldCollection;
 
 class OnboardingService
 {
-    public function startOnboarding(): string
+    private OnboardingAgent $agent;
+
+    public function __construct()
     {
-        $sessionId = OnboardingAgent::startSession();
-        
-        $fields = OnboardingFieldCollection::make([
-            OnboardingField::make('customer_name', 'Full name of the customer', null, true),
-            OnboardingField::make('company_name', 'Company name', null, true),
-            OnboardingField::make('budget', 'Budget amount', '0', false, 'decimal'),
-            OnboardingField::make('timeline', 'Implementation timeline', null, false)
+        $this->agent = new OnboardingAgent('anthropic');
+        $this->agent->configureFields([
+            'customer_name',
+            'company_name', 
+            'budget',
+            'timeline'
         ]);
-        
-        OnboardingAgent::setFields($fields);
-        
-        return $sessionId;
     }
     
-    public function processMessage(string $message, string $sessionId): string
+    public function startOnboarding(): array
     {
-        $response = OnboardingAgent::chat($message, $sessionId);
+        $result = $this->agent->beginConversation();
+        return [
+            'session_id' => $result->sessionId,
+            'first_message' => $result->firstMessage
+        ];
+    }
+    
+    public function processMessage(string $message, ?string $sessionId = null): string
+    {
+        $response = $this->agent->chat($message, $sessionId);
         return $response->content;
     }
     
-    public function completeOnboarding(string $sessionId): array
+    public function completeOnboarding(?string $sessionId = null): array
     {
-        $result = OnboardingAgent::finish($sessionId);
-        return $result->extractedFields;
+        return $this->agent->completeOnboarding($sessionId);
     }
 }
 ```
@@ -186,8 +189,15 @@ class OnboardingService
 ```php
 use ElliotPutt\LaravelAiOnboarding\Facades\OnboardingAgent;
 
-$sessionId = OnboardingAgent::startSession();
+// Modern facade usage
+$agent = OnboardingAgent::withFields(['name', 'email', 'company'], 'anthropic');
+$result = $agent->beginConversation();
+$response = $agent->chat('John Doe');
+$data = $agent->completeOnboarding();
+
+// Or legacy static methods
 OnboardingAgent::setFields(['name', 'email', 'company']);
+$sessionId = OnboardingAgent::startSession();
 $results = OnboardingAgent::finish($sessionId);
 ```
 

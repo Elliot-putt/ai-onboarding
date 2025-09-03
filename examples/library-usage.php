@@ -8,127 +8,133 @@
  */
 
 use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
-use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingField;
-use ElliotPutt\LaravelAiOnboarding\Collections\OnboardingFieldCollection;
+use ElliotPutt\LaravelAiOnboarding\DTOs\ChatMessage;
 
 class CustomerOnboardingService
 {
+    private OnboardingAgent $agent;
+
+    public function __construct()
+    {
+        // Create agent with specific AI model
+        $this->agent = new OnboardingAgent('anthropic');
+        
+        // Configure fields to collect
+        $this->agent->configureFields([
+            'customer_name',
+            'company_name', 
+            'job_title',
+            'team_size',
+            'primary_goal',
+            'budget_range',
+            'timeline',
+            'contact_email'
+        ]);
+    }
+    
     /**
      * Start a new customer onboarding session
      */
-    public function startOnboarding(): string
+    public function startOnboarding(): array
     {
         // Start a new session
-        $sessionId = OnboardingAgent::startSession();
+        $result = $this->agent->beginConversation();
         
-        // Define the fields we want to extract
-        $fields = OnboardingFieldCollection::make([
-            OnboardingField::make('customer_name', 'Full name of the customer', null, true),
-            OnboardingField::make('company_name', 'Name of the company they work for', null, true),
-            OnboardingField::make('job_title', 'Their current job title or role'),
-            OnboardingField::make('team_size', 'Size of their team or organization'),
-            OnboardingField::make('primary_goal', 'Main goal they want to achieve', null, true),
-            OnboardingField::make('budget_range', 'Their budget range for the solution'),
-            OnboardingField::make('timeline', 'When they need this implemented by'),
-            OnboardingField::make('contact_email', 'Their email address for follow-up', null, true, 'email')
-        ]);
-        
-        // Set the fields for extraction
-        OnboardingAgent::setFields($fields);
-        
-        return $sessionId;
+        return [
+            'session_id' => $result->sessionId,
+            'first_message' => $result->firstMessage,
+            'success' => $result->success
+        ];
     }
     
     /**
      * Process a customer message and get AI response
      */
-    public function processMessage(string $message, string $sessionId): string
+    public function processMessage(string $message, ?string $sessionId = null): ChatMessage
     {
         // Send message to AI and get response
-        $response = OnboardingAgent::chat($message, $sessionId);
+        return $this->agent->chat($message, $sessionId);
+    }
+    
+    /**
+     * Get onboarding progress
+     */
+    public function getProgress(?string $sessionId = null): array
+    {
+        $progress = $this->agent->getProgress($sessionId);
         
-        return $response->content;
-    }
-    
-    /**
-     * Manually add a user message without AI response
-     */
-    public function addUserMessage(string $message, string $sessionId): void
-    {
-        OnboardingAgent::addUserMessage($message, $sessionId);
-    }
-    
-    /**
-     * Manually add an AI response
-     */
-    public function addAIResponse(string $message, string $sessionId): void
-    {
-        OnboardingAgent::addAssistantMessage($message, $sessionId);
+        return [
+            'current_field' => $progress->currentField,
+            'progress_percentage' => $progress->progressPercentage,
+            'is_complete' => $progress->isComplete,
+            'remaining_fields' => $progress->getRemainingFields()
+        ];
     }
     
     /**
      * Complete the onboarding and get extracted data
      */
-    public function completeOnboarding(string $sessionId): array
+    public function completeOnboarding(?string $sessionId = null): array
     {
         // Finish the onboarding and extract all fields
-        $result = OnboardingAgent::finish($sessionId);
-        
-        // Return the extracted data
-        return [
-            'session_id' => $result->sessionId,
-            'extracted_fields' => $result->extractedFields,
-            'conversation_summary' => $result->conversationSummary,
-            'total_messages' => $result->totalMessages,
-            'conversation_history' => $result->conversationHistory
-        ];
+        return $this->agent->completeOnboarding($sessionId);
     }
     
     /**
-     * Get specific field value
+     * Get conversation history
      */
-    public function getFieldValue(string $fieldKey, string $sessionId): mixed
+    public function getConversationHistory(?string $sessionId = null): array
     {
-        return OnboardingAgent::getField($fieldKey, $sessionId);
-    }
-    
-    /**
-     * Check if a field has been extracted
-     */
-    public function hasFieldValue(string $fieldKey, string $sessionId): bool
-    {
-        return OnboardingAgent::hasField($fieldKey, $sessionId);
+        return $this->agent->getConversationHistory($sessionId);
     }
 }
 
 /**
- * Example: Simple Usage with Array Fields
+ * Example: Simple Usage with Static Methods (Legacy)
  */
 class SimpleOnboardingService
 {
-    public function startOnboarding(): string
+    public function startOnboarding(): array
     {
-        $sessionId = OnboardingAgent::startSession();
+        // Use legacy static methods
+        OnboardingAgent::setFields(['name', 'email', 'company']);
+        $result = OnboardingAgent::startSession();
         
-        // Simple array format for fields
-        OnboardingAgent::setFields([
-            'name' => 'Customer name',
-            'email' => 'Email address',
-            'company' => 'Company name'
-        ]);
-        
-        return $sessionId;
+        return $result;
     }
     
-    public function chat(string $message, string $sessionId): string
+    public function chat(string $message, ?string $sessionId = null): ChatMessage
     {
-        $response = OnboardingAgent::chat($message, $sessionId);
-        return $response->content;
+        return OnboardingAgent::chat($message, $sessionId);
     }
     
-    public function finish(string $sessionId): array
+    public function finish(?string $sessionId = null): array
     {
-        $result = OnboardingAgent::finish($sessionId);
-        return $result->extractedFields;
+        return OnboardingAgent::finish($sessionId);
     }
-} 
+}
+
+/**
+ * Example: Using the Facade
+ */
+class FacadeOnboardingService
+{
+    public function startOnboarding(): array
+    {
+        // Use facade with factory method
+        $agent = OnboardingAgent::withFields(['name', 'email', 'company'], 'openai');
+        $result = $agent->beginConversation();
+        
+        return [
+            'session_id' => $result->sessionId,
+            'first_message' => $result->firstMessage
+        ];
+    }
+    
+    public function chat(string $message, ?string $sessionId = null): ChatMessage
+    {
+        // Use facade singleton
+        OnboardingAgent::configureFields(['name', 'email', 'company']);
+        return OnboardingAgent::chat($message, $sessionId);
+    }
+}

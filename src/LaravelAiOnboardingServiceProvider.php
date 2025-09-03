@@ -12,8 +12,8 @@ class LaravelAiOnboardingServiceProvider extends ServiceProvider
             __DIR__.'/../config/ai-onboarding.php', 'ai-onboarding'
         );
 
-        // Register the OnboardingAgent as a singleton
-        $this->app->singleton('ai-onboarding-agent', function ($app) {
+        // Register the OnboardingAgent factory
+        $this->app->bind('ai-onboarding-agent', function ($app) {
             return new OnboardingAgent();
         });
     }
