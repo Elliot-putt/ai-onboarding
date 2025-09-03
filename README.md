@@ -9,7 +9,7 @@ A powerful Laravel package that uses AI to conduct conversational onboarding ses
 - 🔧 **Flexible Configuration** - Choose your AI model and fields
 - 📊 **Progress Tracking** - Monitor onboarding completion
 - 🎯 **Type Safety** - Full DTO support with IDE autocomplete
-- 🔄 **Backward Compatible** - Legacy static methods still work
+- 🔄 **Modern API** - Clean instance-based methods with full type safety
 - 🏗️ **Clean Architecture** - Interfaces, traits, and proper separation of concerns
 
 ## Installation
@@ -46,8 +46,9 @@ return [
             'base_url' => 'http://localhost:11434',
         ],
         'gemini' => [
-            'model' => 'gemini-pro',
+            'model' => 'gemini-2.0-flash',
             'api_key' => env('GEMINI_API_KEY'),
+            'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
         ],
     ],
 ];
@@ -88,13 +89,14 @@ $data = $agent->completeOnboarding();
 ```php
 use ElliotPutt\LaravelAiOnboarding\Facades\OnboardingAgent;
 
-// Factory method - create with fields
+// Factory method - create with fields (recommended)
 $agent = OnboardingAgent::withFields(['name', 'email', 'company'], 'openai');
 $result = $agent->beginConversation();
 
-// Or use singleton
-OnboardingAgent::configureFields(['name', 'email', 'company']);
-$result = OnboardingAgent::beginConversation();
+// Alternative: Create instance and configure separately
+$agent = OnboardingAgent::create('anthropic');
+$agent->configureFields(['name', 'email', 'company']);
+$result = $agent->beginConversation();
 ```
 
 ### Type-Safe DTOs
@@ -109,7 +111,7 @@ $result = $agent->beginConversation();
 // $result is OnboardingSessionResult with ->success, ->sessionId, ->firstMessage
 
 $response = $agent->chat('John Doe');
-// $response is ChatMessage with ->role, ->content, ->timestamp
+// $response is ChatMessage with ->role, ->content, ->timestamp, ->sessionId
 
 $progress = $agent->getProgress();
 // $progress is OnboardingProgress with ->progressPercentage, ->isComplete, etc.
@@ -172,6 +174,7 @@ $message->timestamp; // string
 $message->sessionId; // string|null
 $message->isUser();  // bool
 $message->isAssistant(); // bool
+$message->toArray(); // array
 ```
 
 ## Advanced Usage
@@ -208,7 +211,7 @@ if ($progress->isComplete) {
 ```php
 $history = $agent->getConversationHistory();
 foreach ($history as $message) {
-    echo "[{$message['timestamp']}] {$message['role']}: {$message['content']}";
+    echo "[{$message->timestamp}] {$message->role}: {$message->content}";
 }
 ```
 
@@ -236,7 +239,8 @@ class OnboardingController extends Controller
     
     public function chat(Request $request)
     {
-        $agent = new OnboardingAgent();
+        $agent = new OnboardingAgent('anthropic');
+        $agent->configureFields(['name', 'email', 'company']);
         $response = $agent->chat($request->message, $request->session_id);
         
         return response()->json([

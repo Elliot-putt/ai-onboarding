@@ -3,9 +3,9 @@
 ## Prerequisites
 
 - PHP 8.1 or higher
-- Laravel 10.x or 11.x
+- Laravel 10.x, 11.x, or 12.x
 - Composer
-- Valid API key for at least one AI provider (OpenAI, Anthropic, or Ollama)
+- Valid API key for at least one AI provider (OpenAI, Anthropic, Gemini, or Ollama)
 
 ## Step 1: Install the Package
 
@@ -37,6 +37,11 @@ OPENAI_MODEL=gpt-4
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ANTHROPIC_MODEL=claude-3-sonnet-20240229
 
+# Gemini Configuration (Optional)
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.0-flash
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+
 # Ollama Configuration (Optional - for local models)
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama2
@@ -53,27 +58,28 @@ Route::get('/test-onboarding', function () {
     use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
     
     try {
-        // Start session
-        $sessionId = OnboardingAgent::startSession();
+        // Create agent instance with fields
+        $agent = OnboardingAgent::withFields([
+            'customer_name',
+            'email_address', 
+            'company_name'
+        ], 'openai');
         
-        // Set fields
-        OnboardingAgent::setFields([
-            'name' => 'Customer name',
-            'email' => 'Email address',
-            'company' => 'Company name'
-        ]);
+        // Start conversation
+        $result = $agent->beginConversation();
         
         // Test chat
-        $response = OnboardingAgent::chat("Hi, I'm John from TechCorp", $sessionId);
+        $response = $agent->chat("Hi, I'm John from TechCorp", $result->sessionId);
         
-        // Finish and extract
-        $results = OnboardingAgent::finish($sessionId);
+        // Complete and extract
+        $extractedData = $agent->completeOnboarding($result->sessionId);
         
         return response()->json([
             'success' => true,
-            'session_id' => $sessionId,
+            'session_id' => $result->sessionId,
+            'first_message' => $result->firstMessage,
             'chat_response' => $response->content,
-            'extracted_fields' => $results->extractedFields
+            'extracted_fields' => $extractedData
         ]);
         
     } catch (Exception $e) {
@@ -101,22 +107,31 @@ use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
 
 class OnboardingController extends Controller
 {
+    private OnboardingAgent $agent;
+    
+    public function __construct()
+    {
+        // Initialize agent with fields
+        $this->agent = OnboardingAgent::withFields([
+            'customer_name',
+            'company_name',
+            'primary_needs'
+        ], 'anthropic');
+    }
+    
     public function start()
     {
-        $sessionId = OnboardingAgent::startSession();
+        $result = $this->agent->beginConversation();
         
-        OnboardingAgent::setFields([
-            'customer_name' => 'Customer name',
-            'company' => 'Company name',
-            'needs' => 'What they need'
+        return response()->json([
+            'session_id' => $result->sessionId,
+            'first_message' => $result->firstMessage
         ]);
-        
-        return response()->json(['session_id' => $sessionId]);
     }
     
     public function chat(Request $request)
     {
-        $response = OnboardingAgent::chat(
+        $response = $this->agent->chat(
             $request->input('message'),
             $request->input('session_id')
         );
@@ -126,14 +141,12 @@ class OnboardingController extends Controller
     
     public function complete(Request $request)
     {
-        $results = OnboardingAgent::finish($request->input('session_id'));
+        $extractedData = $this->agent->completeOnboarding($request->input('session_id'));
         
         // Process the extracted data
-        $customerData = $results->extractedFields;
-        
         // Save to database, send emails, etc.
         
-        return response()->json(['success' => true, 'data' => $customerData]);
+        return response()->json(['success' => true, 'data' => $extractedData]);
     }
 }
 ```
@@ -146,6 +159,9 @@ class OnboardingController extends Controller
 namespace App\Services;
 
 use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
+use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingSessionResult;
+use ElliotPutt\LaravelAiOnboarding\DTOs\ChatMessage;
+use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingProgress;
 
 class OnboardingService
 {
@@ -162,19 +178,19 @@ class OnboardingService
         ]);
     }
     
-    public function startOnboarding(): array
+    public function startOnboarding(): OnboardingSessionResult
     {
-        $result = $this->agent->beginConversation();
-        return [
-            'session_id' => $result->sessionId,
-            'first_message' => $result->firstMessage
-        ];
+        return $this->agent->beginConversation();
     }
     
-    public function processMessage(string $message, ?string $sessionId = null): string
+    public function processMessage(string $message, ?string $sessionId = null): ChatMessage
     {
-        $response = $this->agent->chat($message, $sessionId);
-        return $response->content;
+        return $this->agent->chat($message, $sessionId);
+    }
+    
+    public function getProgress(?string $sessionId = null): OnboardingProgress
+    {
+        return $this->agent->getProgress($sessionId);
     }
     
     public function completeOnboarding(?string $sessionId = null): array
@@ -189,16 +205,16 @@ class OnboardingService
 ```php
 use ElliotPutt\LaravelAiOnboarding\Facades\OnboardingAgent;
 
-// Modern facade usage
+// Modern facade usage - recommended approach
 $agent = OnboardingAgent::withFields(['name', 'email', 'company'], 'anthropic');
 $result = $agent->beginConversation();
-$response = $agent->chat('John Doe');
-$data = $agent->completeOnboarding();
+$response = $agent->chat('John Doe', $result->sessionId);
+$data = $agent->completeOnboarding($result->sessionId);
 
-// Or legacy static methods
-OnboardingAgent::setFields(['name', 'email', 'company']);
-$sessionId = OnboardingAgent::startSession();
-$results = OnboardingAgent::finish($sessionId);
+// Alternative: Create instance and configure separately
+$agent = OnboardingAgent::create('openai');
+$agent->configureFields(['name', 'email', 'company']);
+$result = $agent->beginConversation();
 ```
 
 ## Step 6: Advanced Usage
@@ -206,56 +222,60 @@ $results = OnboardingAgent::finish($sessionId);
 ### Multiple Sessions
 
 ```php
-// Start multiple sessions
-$session1 = OnboardingAgent::startSession('user-123');
-$session2 = OnboardingAgent::startSession('user-456');
+// Create separate agent instances for different users
+$agent1 = OnboardingAgent::withFields(['name', 'email'], 'openai');
+$agent2 = OnboardingAgent::withFields(['company', 'role'], 'anthropic');
+
+// Start sessions for different users
+$result1 = $agent1->beginConversation('user-123');
+$result2 = $agent2->beginConversation('user-456');
 
 // Work with session 1
-OnboardingAgent::setCurrentSession($session1);
-OnboardingAgent::setFields(['name', 'email']);
-OnboardingAgent::chat("Hi, I'm Alice", $session1);
+$response1 = $agent1->chat("Hi, I'm Alice", $result1->sessionId);
 
-// Switch to session 2
-OnboardingAgent::setCurrentSession($session2);
-OnboardingAgent::setFields(['company', 'role']);
-OnboardingAgent::chat("Hi, I'm Bob from Acme Corp", $session2);
+// Work with session 2
+$response2 = $agent2->chat("Hi, I'm Bob from Acme Corp", $result2->sessionId);
 
 // Complete both sessions
-$results1 = OnboardingAgent::finish($session1);
-$results2 = OnboardingAgent::finish($session2);
+$data1 = $agent1->completeOnboarding($result1->sessionId);
+$data2 = $agent2->completeOnboarding($result2->sessionId);
 ```
 
-### Manual Conversation Control
+### Progress Tracking
 
 ```php
-$sessionId = OnboardingAgent::startSession();
-OnboardingAgent::setFields(['name', 'email', 'company']);
+$agent = OnboardingAgent::withFields(['name', 'email', 'company'], 'openai');
+$result = $agent->beginConversation();
 
-// Add user message without AI response
-OnboardingAgent::addUserMessage("Hi, I'm John Smith");
+// Get progress information
+$progress = $agent->getProgress($result->sessionId);
+echo "Current field: " . $progress->currentField;
+echo "Progress: " . $progress->progressPercentage . "%";
+echo "Is complete: " . ($progress->isComplete ? 'Yes' : 'No');
 
-// Add AI response manually
-OnboardingAgent::addAssistantMessage("Hello John! Nice to meet you. What company do you work for?");
-
-// Add another user message
-OnboardingAgent::addUserMessage("I work at TechCorp as a developer");
-
-// Complete and extract
-$results = OnboardingAgent::finish($sessionId);
+// Check if onboarding is complete
+if ($agent->isComplete($result->sessionId)) {
+    $data = $agent->completeOnboarding($result->sessionId);
+}
 ```
 
-### Field Management
+### Conversation History
 
 ```php
-// Get specific field values
-$customerName = OnboardingAgent::getField('name', $sessionId);
-$hasEmail = OnboardingAgent::hasField('email', $sessionId);
+$agent = OnboardingAgent::withFields(['name', 'email', 'company'], 'openai');
+$result = $agent->beginConversation();
 
-// Get all extracted fields
-$allFields = OnboardingAgent::getExtractedFields($sessionId);
+// Send some messages
+$agent->chat("Hi, I'm John", $result->sessionId);
+$agent->chat("john@example.com", $result->sessionId);
 
 // Get conversation history
-$history = OnboardingAgent::getHistory($sessionId);
+$history = $agent->getConversationHistory($result->sessionId);
+
+// History contains ChatMessage objects with role, content, and sessionId
+foreach ($history as $message) {
+    echo $message->role . ": " . $message->content . "\n";
+}
 ```
 
 ## Step 7: Customization
@@ -270,27 +290,31 @@ Extend the OnboardingAgent class:
 namespace App\Services;
 
 use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
+use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingSessionResult;
 
 class CustomOnboardingAgent extends OnboardingAgent
 {
-    protected static function buildConversationContext(string $sessionId): array
+    public function beginConversation(?string $sessionId = null): OnboardingSessionResult
     {
-        $messages = [
-            [
-                'role' => 'system',
-                'content' => 'You are a friendly customer success specialist. Be warm and professional.'
-            ]
-        ];
+        // Call parent method
+        $result = parent::beginConversation($sessionId);
         
-        // Add conversation history
-        foreach (static::$conversationHistory[$sessionId] as $message) {
-            $messages[] = [
-                'role' => $message->role,
-                'content' => $message->content
-            ];
-        }
+        // Customize the first message
+        $customMessage = "Welcome! I'm your personal onboarding assistant. Let's get started!";
         
-        return $messages;
+        return OnboardingSessionResult::make(
+            $result->success,
+            $result->sessionId,
+            $customMessage
+        );
+    }
+    
+    protected function getAIInstructions(array $fields): string
+    {
+        $baseInstructions = parent::getAIInstructions($fields);
+        
+        // Add custom instructions
+        return $baseInstructions . "\n\nAdditional instructions: Be extra friendly and use emojis when appropriate.";
     }
 }
 ```
@@ -306,10 +330,15 @@ class CustomOnboardingAgent extends OnboardingAgent
 2. **API key errors**
    - Verify your API keys are correct in `.env`
    - Check that the AI provider is accessible
+   - Ensure the model configuration exists in `config/ai-onboarding.php`
 
-3. **Field extraction fails**
-   - Verify that the AI model can generate valid JSON responses
-   - Check that field keys are properly defined
+3. **"No fields configured" error**
+   - Make sure to call `configureFields()` before `beginConversation()`
+   - Or use `OnboardingAgent::withFields()` helper method
+
+4. **Session management issues**
+   - Always pass the session ID when working with multiple sessions
+   - Use the returned `OnboardingSessionResult` object to get the session ID
 
 ### Debug Mode
 
@@ -350,4 +379,22 @@ Or run specific test files:
 
 ```bash
 ./vendor/bin/phpunit tests/OnboardingAgentTest.php
-``` 
+```
+
+## API Reference
+
+### OnboardingAgent Methods
+
+- `__construct(?string $aiModel = null)` - Create new instance
+- `configureFields(array $fields): self` - Set fields to collect
+- `beginConversation(?string $sessionId = null): OnboardingSessionResult` - Start session
+- `chat(string $userMessage, ?string $sessionId = null): ChatMessage` - Send message
+- `completeOnboarding(?string $sessionId = null): array` - Get extracted data
+- `getProgress(?string $sessionId = null): OnboardingProgress` - Get progress info
+- `isComplete(?string $sessionId = null): bool` - Check if complete
+- `getConversationHistory(?string $sessionId = null): array` - Get chat history
+
+### Facade Helpers
+
+- `OnboardingAgent::create(?string $aiModel = null)` - Create instance
+- `OnboardingAgent::withFields(array $fields, ?string $aiModel = null)` - Create with fields 
