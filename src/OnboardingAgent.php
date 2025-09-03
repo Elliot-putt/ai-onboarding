@@ -78,17 +78,28 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
     {
         $sessionId = $sessionId ?? $this->sessionId ?? $this->ensureSessionExists($sessionId);
 
-        // Store the user's answer for the current field
-        $currentField = $this->getCurrentField($sessionId);
-        if ($currentField) {
-            $this->storeExtractedField($sessionId, $currentField, $userMessage);
-        }
-
         // Add user message to conversation history
         $this->addToConversation($sessionId, 'user', $userMessage);
 
+        // Get current field and validate the user's answer
+        $currentField = $this->getCurrentField($sessionId);
+        $isValidAnswer = true;
+        
+        if ($currentField) {
+            // Create a question from the field name for validation
+            $question = $this->createQuestionFromField($currentField);
+            
+            // Validate the user's answer
+            $isValidAnswer = $this->validateUserAnswer($question, $userMessage);
+            
+            // Only store the field if the answer is valid
+            if ($isValidAnswer) {
+                $this->storeExtractedField($sessionId, $currentField, $userMessage);
+            }
+        }
+
         // Determine next question or completion
-        $aiMessage = $this->generateNextResponse($sessionId, $userMessage, $currentField);
+        $aiMessage = $this->generateNextResponse($sessionId, $userMessage, $currentField, $isValidAnswer);
 
         // Add AI response to conversation history
         $this->addToConversation($sessionId, 'assistant', $aiMessage);
@@ -162,11 +173,20 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
     /**
      * Generate the next AI response based on current progress
      */
-    private function generateNextResponse(string $sessionId, string $userMessage, ?string $currentField): string
+    private function generateNextResponse(string $sessionId, string $userMessage, ?string $currentField, bool $isValidAnswer = true): string
     {
         $fields = $this->getSessionFields($sessionId);
         $currentQuestionIndex = $this->getLastQuestionIndex($sessionId);
         $nextQuestionIndex = $currentQuestionIndex + 1;
+
+        if (!$isValidAnswer) {
+            // User's answer was not valid, ask the same question again
+            $aiInstructions = $this->getAIInstructions($fields);
+            return $this->getAIResponse(
+                $aiInstructions,
+                "The user's response '{$userMessage}' was not a valid answer for the {$currentField} field. Please ask the question again in a different way, but make sure to ask for the {$currentField} field at the end of your response. Be friendly and encouraging."
+            );
+        }
 
         if ($nextQuestionIndex < count($fields)) {
             // There are more fields to ask
@@ -184,5 +204,30 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
             // All fields completed
             return "Thank you! I have all the information I need. Your onboarding is complete!";
         }
+    }
+
+    /**
+     * Create a question from a field name for validation purposes
+     */
+    private function createQuestionFromField(string $field): string
+    {
+        // Convert field name to a question format
+        $question = "What is your " . strtolower($field) . "?";
+        
+        // Handle common field types with better questions
+        $fieldLower = strtolower($field);
+        if (str_contains($fieldLower, 'name')) {
+            $question = "What is your name?";
+        } elseif (str_contains($fieldLower, 'email')) {
+            $question = "What is your email address?";
+        } elseif (str_contains($fieldLower, 'phone')) {
+            $question = "What is your phone number?";
+        } elseif (str_contains($fieldLower, 'age')) {
+            $question = "What is your age?";
+        } elseif (str_contains($fieldLower, 'address')) {
+            $question = "What is your address?";
+        }
+        
+        return $question;
     }
 }
