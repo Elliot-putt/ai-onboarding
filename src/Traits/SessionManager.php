@@ -4,13 +4,14 @@ namespace ElliotPutt\LaravelAiOnboarding\Traits;
 
 use Illuminate\Support\Facades\Session;
 use ElliotPutt\LaravelAiOnboarding\Enums\SessionKeys;
+use ElliotPutt\LaravelAiOnboarding\DTOs\FieldDefinition;
 
 trait SessionManager
 {
     /**
      * Set onboarding fields for a session
      */
-    protected function setSessionFields(array $fields, ?string $sessionId = null): void
+    public function setSessionFields(array $fields, ?string $sessionId = null): void
     {
         if (!$sessionId) {
             $sessionId = Session::get(SessionKeys::CURRENT_SESSION_ID->value);
@@ -162,5 +163,51 @@ trait SessionManager
         }
 
         return $sessionId;
+    }
+
+    /**
+     * Set field definitions for a session
+     */
+    public function setSessionFieldDefinitions(array $fieldDefinitions, ?string $sessionId = null): void
+    {
+        if (!$sessionId) {
+            $sessionId = Session::get(SessionKeys::CURRENT_SESSION_ID->value);
+        }
+        
+        if ($sessionId) {
+            // Convert FieldDefinition objects to arrays for storage
+            $definitionsArray = array_map(function($def) {
+                if ($def instanceof FieldDefinition) {
+                    return $def->toArray();
+                }
+                return $def;
+            }, $fieldDefinitions);
+            
+            Session::put(SessionKeys::FIELDS->withSessionId($sessionId) . '_definitions', $definitionsArray);
+        }
+    }
+
+    /**
+     * Get field definitions for a session
+     */
+    public function getSessionFieldDefinitions(?string $sessionId = null): array
+    {
+        if (!$sessionId) {
+            $sessionId = Session::get(SessionKeys::CURRENT_SESSION_ID->value);
+        }
+
+        if (!$sessionId) {
+            return [];
+        }
+
+        $definitionsArray = Session::get(SessionKeys::FIELDS->withSessionId($sessionId) . '_definitions', []);
+        
+        // Convert arrays back to FieldDefinition objects
+        return array_map(function($def) {
+            if (is_array($def)) {
+                return FieldDefinition::fromArray($def);
+            }
+            return $def;
+        }, $definitionsArray);
     }
 }

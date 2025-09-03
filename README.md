@@ -56,7 +56,7 @@ return [
 
 ## Quick Start
 
-### Modern API (Recommended)
+### Modern API with Laravel Validation (Recommended)
 
 ```php
 use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
@@ -64,7 +64,47 @@ use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
 // Create agent with AI model
 $agent = new OnboardingAgent('anthropic');
 
-// Configure fields to collect
+// Configure fields with Laravel validation rules using the new clean syntax
+$agent->configureFields([
+    'fields' => [
+        'name',
+        'email',
+        'phone',
+        'budget'
+    ],
+    'rules' => [
+        'email' => ['required', 'email'],
+        'phone' => ['nullable', 'string', 'regex:/^[\+]?[1-9][\d]{0,15}$/'],
+        'budget' => ['required', 'numeric', 'min:1000', 'max:100000']
+    ]
+]);
+
+// Start conversation
+$result = $agent->beginConversation();
+echo $result->firstMessage; // "Hi! I'd love to learn more about you. What's your name?"
+
+// Chat with the AI (automatically validates with both AI and Laravel rules)
+$response = $agent->chat('John Doe');
+echo $response->content; // "Great to meet you, John! What's your email address?"
+
+// Check progress
+$progress = $agent->getProgress();
+echo "Progress: {$progress->progressPercentage}%"; // "Progress: 25%"
+
+// Complete onboarding (all data validated)
+$data = $agent->completeOnboarding();
+// Returns: ['name' => 'John Doe', 'email' => 'john@example.com', ...]
+```
+
+### Simple API (Backward Compatible)
+
+```php
+use ElliotPutt\LaravelAiOnboarding\OnboardingAgent;
+
+// Create agent with AI model
+$agent = new OnboardingAgent('anthropic');
+
+// Configure fields to collect (simple format)
 $agent->configureFields(['name', 'email', 'company', 'budget']);
 
 // Start conversation
@@ -175,6 +215,104 @@ $message->sessionId; // string|null
 $message->isUser();  // bool
 $message->isAssistant(); // bool
 $message->toArray(); // array
+```
+
+## Validation System
+
+The package now supports **dual validation** - combining AI validation with Laravel validation rules for robust data collection.
+
+### How It Works
+
+1. **AI Validation**: Always performed to ensure the user's response is a valid answer to the question
+2. **Laravel Validation**: Performed when validation rules are defined for a field
+3. **Both must pass** for the field to be accepted
+
+### Field Configuration Options
+
+#### New Clean Syntax (Recommended)
+The new syntax separates field names from validation rules, making it much cleaner and easier to read:
+
+```php
+$agent->configureFields([
+    'fields' => [
+        'email',
+        'phone'
+    ],
+    'rules' => [
+        'email' => ['required', 'email'],
+        'phone' => ['nullable', 'string'],
+    ],
+]);
+```
+
+**Benefits:**
+- ✅ **Cleaner separation** of field names and validation rules
+- ✅ **More readable** and easier to maintain
+- ✅ **Intuitive** for Laravel developers
+- ✅ **Flexible** - only define rules for fields that need validation
+- ✅ **Backward compatible** with all existing formats
+
+#### Simple Fields (Backward Compatible)
+```php
+$agent->configureFields(['name', 'email', 'company']);
+```
+
+#### Fields with Validation Rules (New Clean Syntax)
+```php
+$agent->configureFields([
+    'fields' => [
+        'email',
+        'phone',
+        'budget'
+    ],
+    'rules' => [
+        'email' => ['required', 'email'],
+        'phone' => ['nullable', 'string', 'regex:/^[\+]?[1-9][\d]{0,15}$/'],
+        'budget' => ['required', 'numeric', 'min:1000', 'max:100000']
+    ]
+]);
+```
+
+#### Legacy Format (Still Supported)
+```php
+$agent->configureFields([
+    [
+        'name' => 'email',
+        'rules' => ['required', 'email'],
+        'label' => 'Email Address',
+        'description' => 'Your primary email address'
+    ],
+    [
+        'name' => 'phone',
+        'rules' => ['nullable', 'string', 'regex:/^[\+]?[1-9][\d]{0,15}$/'],
+        'label' => 'Phone Number'
+    ]
+]);
+```
+
+### Supported Laravel Validation Rules
+
+All standard Laravel validation rules are supported:
+
+- `required`, `nullable`
+- `string`, `numeric`, `integer`, `boolean`
+- `email`, `url`, `date`, `regex`
+- `min:value`, `max:value`, `between:min,max`
+- `in:value1,value2`, `not_in:value1,value2`
+- `size:value`, `digits:value`
+- Custom validation rules and closures
+
+### Validation Error Handling
+
+When validation fails, the AI will:
+1. Explain what went wrong
+2. Ask for the information again
+3. Provide helpful guidance based on the validation error
+
+```php
+// User enters invalid email
+$response = $agent->chat('not-an-email');
+// AI: "That doesn't look like a valid email address. Please provide a proper email like john@example.com"
 ```
 
 ## Advanced Usage

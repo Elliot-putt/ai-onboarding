@@ -33,10 +33,24 @@ class OnboardingAgent extends Facade
 
     /**
      * Create a new OnboardingAgent instance with configured fields
+     * 
+     * @param array $config Can be:
+     *   - Simple array: ['name', 'email', 'company'] (backward compatible)
+     *   - New syntax: [
+     *       'fields' => ['name', 'email', 'phone'],
+     *       'rules' => [
+     *           'email' => ['required', 'email'],
+     *           'phone' => ['nullable', 'string']
+     *       ]
+     *     ]
+     *   - Legacy format: [
+     *       ['name' => 'email', 'rules' => ['required', 'email']],
+     *       'name' // Simple field name still supported
+     *     ]
      */
-    public static function withFields(array $fields, ?string $aiModel = null)
+    public static function withFields(array $config, ?string $aiModel = null)
     {
         $agent = new \ElliotPutt\LaravelAiOnboarding\OnboardingAgent($aiModel);
-        return $agent->configureFields($fields);
+        return $agent->configureFields($config);
     }
 } 

@@ -6,15 +6,19 @@ use Illuminate\Support\Str;
 use ElliotPutt\LaravelAiOnboarding\DTOs\ChatMessage;
 use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingSessionResult;
 use ElliotPutt\LaravelAiOnboarding\DTOs\OnboardingProgress;
+use ElliotPutt\LaravelAiOnboarding\DTOs\FieldDefinition;
+use ElliotPutt\LaravelAiOnboarding\DTOs\ValidationResult;
 use ElliotPutt\LaravelAiOnboarding\Traits\SessionManager;
 use ElliotPutt\LaravelAiOnboarding\Traits\AIInteraction;
+use ElliotPutt\LaravelAiOnboarding\Traits\LaravelValidation;
 use ElliotPutt\LaravelAiOnboarding\Interfaces\OnboardingAgentCoreInterface;
 
 class OnboardingAgent implements OnboardingAgentCoreInterface
 {
-    use SessionManager, AIInteraction;
+    use SessionManager, AIInteraction, LaravelValidation;
 
     protected array $fields = [];
+    protected array $fieldDefinitions = [];
     protected ?string $sessionId = null;
 
     /**
@@ -29,10 +33,60 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
 
     /**
      * Configure the fields to collect during onboarding
+     * 
+     * @param array $config Can be:
+     *   - Simple array: ['name', 'email', 'company'] (backward compatible)
+     *   - New syntax: [
+     *       'fields' => ['name', 'email', 'phone'],
+     *       'rules' => [
+     *           'email' => ['required', 'email'],
+     *           'phone' => ['nullable', 'string']
+     *       ]
+     *     ]
+     *   - Legacy format: [
+     *       ['name' => 'email', 'rules' => ['required', 'email']],
+     *       'name' // Simple field name still supported
+     *     ]
      */
-    public function configureFields(array $fields): self
+    public function configureFields(array $config): self
     {
-        $this->fields = $fields;
+        $this->fields = [];
+        $this->fieldDefinitions = [];
+
+        // Check if it's the new syntax with 'fields' and 'rules' keys
+        if (isset($config['fields']) && is_array($config['fields'])) {
+            $fields = $config['fields'];
+            $rules = $config['rules'] ?? [];
+            
+            foreach ($fields as $fieldName) {
+                if (!is_string($fieldName)) {
+                    throw new \InvalidArgumentException('Field names must be strings.');
+                }
+                
+                $this->fields[] = $fieldName;
+                
+                // Create field definition with rules if they exist
+                $fieldRules = $rules[$fieldName] ?? [];
+                $this->fieldDefinitions[] = FieldDefinition::make($fieldName, $fieldRules);
+            }
+        } else {
+            // Backward compatibility: handle as simple array or legacy format
+            foreach ($config as $field) {
+                if (is_string($field)) {
+                    // Backward compatibility: simple field name
+                    $this->fields[] = $field;
+                    $this->fieldDefinitions[] = FieldDefinition::fromString($field);
+                } elseif (is_array($field)) {
+                    // Legacy format: field definition with validation rules
+                    $fieldDef = FieldDefinition::fromArray($field);
+                    $this->fields[] = $fieldDef->name;
+                    $this->fieldDefinitions[] = $fieldDef;
+                } else {
+                    throw new \InvalidArgumentException('Invalid field format. Fields must be strings or arrays.');
+                }
+            }
+        }
+
         return $this;
     }
 
@@ -52,8 +106,9 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
 
         $this->sessionId = $sessionId;
 
-        // Store fields and set up session
+        // Store fields and field definitions, set up session
         $this->setSessionFields($this->fields, $sessionId);
+        $this->setSessionFieldDefinitions($this->fieldDefinitions, $sessionId);
         $this->setCurrentSessionId($sessionId);
         $this->initializeSessionData($sessionId);
 
@@ -83,23 +138,20 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
 
         // Get current field and validate the user's answer
         $currentField = $this->getCurrentField($sessionId);
-        $isValidAnswer = true;
+        $validationResult = ValidationResult::success();
         
         if ($currentField) {
-            // Create a question from the field name for validation
-            $question = $this->createQuestionFromField($currentField);
+            // Perform dual validation: AI + Laravel
+            $validationResult = $this->validateUserInput($sessionId, $currentField, $userMessage);
             
-            // Validate the user's answer
-            $isValidAnswer = $this->validateUserAnswer($question, $userMessage);
-            
-            // Only store the field if the answer is valid
-            if ($isValidAnswer) {
+            // Only store the field if validation passes
+            if ($validationResult->isValid) {
                 $this->storeExtractedField($sessionId, $currentField, $userMessage);
             }
         }
 
         // Determine next question or completion
-        $aiMessage = $this->generateNextResponse($sessionId, $userMessage, $currentField, $isValidAnswer);
+        $aiMessage = $this->generateNextResponse($sessionId, $userMessage, $currentField, $validationResult);
 
         // Add AI response to conversation history
         $this->addToConversation($sessionId, 'assistant', $aiMessage);
@@ -173,18 +225,20 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
     /**
      * Generate the next AI response based on current progress
      */
-    private function generateNextResponse(string $sessionId, string $userMessage, ?string $currentField, bool $isValidAnswer = true): string
+    private function generateNextResponse(string $sessionId, string $userMessage, ?string $currentField, ValidationResult $validationResult): string
     {
         $fields = $this->getSessionFields($sessionId);
         $currentQuestionIndex = $this->getLastQuestionIndex($sessionId);
         $nextQuestionIndex = $currentQuestionIndex + 1;
 
-        if (!$isValidAnswer) {
+        if (!$validationResult->isValid) {
             // User's answer was not valid, ask the same question again
             $aiInstructions = $this->getAIInstructions($fields);
+            $errorMessage = $validationResult->getErrorMessage() ?? 'The response was not valid';
+            
             return $this->getAIResponse(
                 $aiInstructions,
-                "The user's response '{$userMessage}' was not a valid answer for the {$currentField} field. Please ask the question again in a different way, but make sure to ask for the {$currentField} field at the end of your response. Be friendly and encouraging."
+                "The user's response '{$userMessage}' was not valid for the {$currentField} field. Error: {$errorMessage}. Please ask the question again in a different way, but make sure to ask for the {$currentField} field at the end of your response. Be friendly and encouraging."
             );
         }
 
@@ -229,5 +283,39 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
         }
         
         return $question;
+    }
+
+    /**
+     * Validate user input using both AI and Laravel validation
+     */
+    public function validateUserInput(string $sessionId, string $fieldName, string $userMessage): ValidationResult
+    {
+        $fieldDefinitions = $this->getSessionFieldDefinitions($sessionId);
+        
+        // Step 1: AI Validation (always performed)
+        $question = $this->createQuestionFromField($fieldName);
+        $aiValidationPassed = $this->validateUserAnswer($question, $userMessage);
+        
+        if (!$aiValidationPassed) {
+            return ValidationResult::failure(
+                [],
+                "The response doesn't seem to be a valid answer to the question.",
+                null
+            );
+        }
+
+        // Step 2: Laravel Validation (if rules exist for this field)
+        $validationRules = $this->getFieldValidationRules($fieldName, $fieldDefinitions);
+        
+        if (!empty($validationRules)) {
+            $laravelResult = $this->validateWithLaravel($fieldName, $userMessage, $validationRules);
+            
+            if (!$laravelResult->isValid) {
+                return $laravelResult;
+            }
+        }
+
+        // Both validations passed
+        return ValidationResult::success();
     }
 }
