@@ -232,13 +232,14 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
         $nextQuestionIndex = $currentQuestionIndex + 1;
 
         if (!$validationResult->isValid) {
-            // User's answer was not valid, ask the same question again
+            // User's answer was not valid, ask the same question again with specific guidance
             $aiInstructions = $this->getAIInstructions($fields);
             $errorMessage = $validationResult->getErrorMessage() ?? 'The response was not valid';
+            $validationGuidance = $this->getValidationGuidance($sessionId, $currentField, $validationResult);
             
             return $this->getAIResponse(
                 $aiInstructions,
-                "The user's response '{$userMessage}' was not valid for the {$currentField} field. Error: {$errorMessage}. Please ask the question again in a different way, but make sure to ask for the {$currentField} field at the end of your response. Be friendly and encouraging."
+                "The user's response '{$userMessage}' was not valid for the {$currentField} field. Error: {$errorMessage}. {$validationGuidance}Please ask the question again and provide guidance on what format is expected. Be friendly and encouraging."
             );
         }
 
@@ -283,6 +284,24 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
         }
         
         return $question;
+    }
+
+    /**
+     * Get validation guidance for the AI based on validation rules
+     */
+    private function getValidationGuidance(string $sessionId, string $fieldName, ValidationResult $validationResult): string
+    {
+        $fieldDefinitions = $this->getSessionFieldDefinitions($sessionId);
+        
+        // Find the field definition
+        foreach ($fieldDefinitions as $def) {
+            if ($def->name === $fieldName && $def->hasValidationRules()) {
+                $rules = implode(', ', $def->validationRules);
+                return "The validation rules for this field are: {$rules}. ";
+            }
+        }
+        
+        return "";
     }
 
     /**
