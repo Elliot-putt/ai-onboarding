@@ -4,9 +4,10 @@ A powerful Laravel package that uses AI to conduct conversational onboarding ses
 
 ## Features
 
-- 🤖 **AI-Powered Conversations** - Uses OpenAI, Anthropic, Ollama, or Gemini
-- 💬 **Natural Language Processing** - Extracts data through friendly chat
-- 🔧 **Flexible Configuration** - Choose your AI model and fields
+- 🤖 **AI-Powered Conversations** - Uses OpenAI, Anthropic, Ollama, Gemini, or your custom AI model
+- 💬 **Natural Language Processing** - Extracts data through friendly chat with intelligent question generation
+- 🧠 **Smart AI Assistant** - AI creates natural questions from field names and helps users when they ask questions
+- 🔧 **Flexible Configuration** - Choose your AI model and fields with custom provider support
 - 📊 **Progress Tracking** - Monitor onboarding completion
 - 🎯 **Type Safety** - Full DTO support with IDE autocomplete
 - 🔄 **Modern API** - Clean instance-based methods with full type safety
@@ -54,6 +55,123 @@ return [
 ];
 ```
 
+## Custom AI Providers
+
+The package supports custom AI providers, allowing you to integrate your own AI services seamlessly. This is perfect for companies with proprietary AI models or specific API requirements.
+
+### Setting Up a Custom Provider
+
+1. **Create your AI provider class** that implements `AIProviderInterface`:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use ElliotPutt\LaravelAiOnboarding\Contracts\AIProviderInterface;
+use App\Services\YourAIService;
+
+class YourAIProvider implements AIProviderInterface
+{
+    public function __construct(
+        private YourAIService $aiService
+    ) {}
+
+    public function generateResponse(string $systemPrompt, string $userPrompt): string
+    {
+        $response = $this->aiService->generateContent([
+            'context' => $systemPrompt,
+            'message' => $userPrompt,
+        ]);
+
+        return $response['content'] ?? '';
+    }
+
+    public function getName(): string
+    {
+        return 'your-ai-provider';
+    }
+
+    public function validateConfig(array $config): bool
+    {
+        return isset($config['api_key']) && isset($config['base_uri']);
+    }
+}
+```
+
+2. **Register your provider** in your `AppServiceProvider`:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Support\ServiceProvider;
+use ElliotPutt\LaravelAiOnboarding\Services\AIProviderRegistry;
+use App\Providers\YourAIProvider;
+use App\Services\YourAIService;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->afterResolving(AIProviderRegistry::class, function (AIProviderRegistry $registry) {
+            $registry->register('custom', new YourAIProvider(
+                app(YourAIService::class)
+            ));
+        });
+    }
+}
+```
+
+3. **Configure your AI service** in `config/services.php`:
+
+```php
+'your-ai-service' => [
+    'api_key' => env('YOUR_AI_API_KEY'),
+    'base_uri' => env('YOUR_AI_BASE_URI'),
+],
+```
+
+4. **Set the custom provider** in your `.env`:
+
+```env
+AI_ONBOARDING_CUSTOM_PROVIDER=App\Providers\YourAIProvider
+```
+
+### How It Works
+
+- The package automatically detects when a custom provider is configured
+- It uses your custom provider instead of the built-in Prism models
+- Your provider receives the same system prompts and user messages as built-in providers
+- The AI creates natural, engaging questions from field names
+- Users can ask questions about fields and get helpful guidance
+
+### Example: StreetAI Integration
+
+Here's a complete example using a custom StreetAI provider:
+
+```php
+// App\Providers\StreetAIProvider.php
+class StreetAIProvider implements AIProviderInterface
+{
+    public function generateResponse(string $systemPrompt, string $userPrompt): string
+    {
+        $response = $this->aiService->generateContent([
+            'context' => $systemPrompt,
+            'message' => $userPrompt,
+        ]);
+
+        return data_get($response, 'response', 'No response from AI service.');
+    }
+}
+
+// Usage remains exactly the same
+$agent = new OnboardingAgent();
+$agent->configureFields(['name', 'email', 'company']);
+$result = $agent->beginConversation();
+```
+
 ## Quick Start
 
 ### Modern API with Laravel Validation (Recommended)
@@ -81,11 +199,15 @@ $agent->configureFields([
 
 // Start conversation
 $result = $agent->beginConversation();
-echo $result->firstMessage; // "Hi! I'd love to learn more about you. What's your name?"
+echo $result->firstMessage; // "Hi there! Welcome—I'm here to help get you started. To begin, could you please tell me your name?"
 
 // Chat with the AI (automatically validates with both AI and Laravel rules)
 $response = $agent->chat('John Doe');
-echo $response->content; // "Great to meet you, John! What's your email address?"
+echo $response->content; // "Thanks, John! Could you please share your email address with me?"
+
+// AI can also help users when they ask questions
+$helpResponse = $agent->chat('What should I put for email?');
+echo $helpResponse->content; // "No problem! For the email field, you should provide the email address you use for work or personal communication. It usually looks like 'yourname@example.com'. Could you please share your email address?"
 
 // Check progress
 $progress = $agent->getProgress();
@@ -109,11 +231,11 @@ $agent->configureFields(['name', 'email', 'company', 'budget']);
 
 // Start conversation
 $result = $agent->beginConversation();
-echo $result->firstMessage; // "Hi! I'd love to learn more about you. What's your name?"
+echo $result->firstMessage; // "Hi there! Welcome—I'm here to help get you started. To begin, could you please tell me your name?"
 
 // Chat with the AI
 $response = $agent->chat('John Doe');
-echo $response->content; // "Great to meet you, John! What's your email address?"
+echo $response->content; // "Thanks, John! Could you please share your email address with me?"
 
 // Check progress
 $progress = $agent->getProgress();
@@ -273,22 +395,6 @@ $agent->configureFields([
 ]);
 ```
 
-#### Legacy Format (Still Supported)
-```php
-$agent->configureFields([
-    [
-        'name' => 'email',
-        'rules' => ['required', 'email'],
-        'label' => 'Email Address',
-        'description' => 'Your primary email address'
-    ],
-    [
-        'name' => 'phone',
-        'rules' => ['nullable', 'string', 'regex:/^[\+]?[1-9][\d]{0,15}$/'],
-        'label' => 'Phone Number'
-    ]
-]);
-```
 
 ### Supported Laravel Validation Rules
 
@@ -430,11 +536,7 @@ class OnboardingTest extends TestCase
 
 ## Contributing
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 

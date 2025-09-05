@@ -3,6 +3,7 @@
 namespace ElliotPutt\LaravelAiOnboarding;
 
 use Illuminate\Support\ServiceProvider;
+use ElliotPutt\LaravelAiOnboarding\Services\AIProviderRegistry;
 
 class LaravelAiOnboardingServiceProvider extends ServiceProvider
 {
@@ -16,6 +17,9 @@ class LaravelAiOnboardingServiceProvider extends ServiceProvider
         $this->app->bind('ai-onboarding-agent', function ($app) {
             return new OnboardingAgent();
         });
+        
+        // Register the AI Provider Registry
+        $this->app->singleton(AIProviderRegistry::class);
     }
 
     public function boot()

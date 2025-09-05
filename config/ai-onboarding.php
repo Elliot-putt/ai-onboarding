@@ -37,6 +37,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Custom AI Provider
+    |--------------------------------------------------------------------------
+    |
+    | If this is set, it will automatically be used instead of default_model
+    | No need to set default_model to 'custom' - it's automatic!
+    |
+    */
+    'custom_provider_class' => env('AI_ONBOARDING_CUSTOM_PROVIDER'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Route Configuration
     |--------------------------------------------------------------------------
     |

@@ -33,7 +33,7 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
 
     /**
      * Configure the fields to collect during onboarding
-     * 
+     *
      * @param array $config Can be:
      *   - Simple array: ['name', 'email', 'company'] (backward compatible)
      *   - New syntax: [
@@ -57,14 +57,14 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
         if (isset($config['fields']) && is_array($config['fields'])) {
             $fields = $config['fields'];
             $rules = $config['rules'] ?? [];
-            
+
             foreach ($fields as $fieldName) {
                 if (!is_string($fieldName)) {
                     throw new \InvalidArgumentException('Field names must be strings.');
                 }
-                
+
                 $this->fields[] = $fieldName;
-                
+
                 // Create field definition with rules if they exist
                 $fieldRules = $rules[$fieldName] ?? [];
                 $this->fieldDefinitions[] = FieldDefinition::make($fieldName, $fieldRules);
@@ -139,11 +139,11 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
         // Get current field and validate the user's answer
         $currentField = $this->getCurrentField($sessionId);
         $validationResult = ValidationResult::success();
-        
+
         if ($currentField) {
             // Perform dual validation: AI + Laravel
             $validationResult = $this->validateUserInput($sessionId, $currentField, $userMessage);
-            
+
             // Only store the field if validation passes
             if ($validationResult->isValid) {
                 $this->storeExtractedField($sessionId, $currentField, $userMessage);
@@ -236,7 +236,7 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
             $aiInstructions = $this->getAIInstructions($fields);
             $errorMessage = $validationResult->getErrorMessage() ?? 'The response was not valid';
             $validationGuidance = $this->getValidationGuidance($sessionId, $currentField, $validationResult);
-            
+
             return $this->getAIResponse(
                 $aiInstructions,
                 "The user's response '{$userMessage}' was not valid for the {$currentField} field. Error: {$errorMessage}. {$validationGuidance}Please ask the question again and provide guidance on what format is expected. Be friendly and encouraging."
@@ -261,30 +261,6 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
         }
     }
 
-    /**
-     * Create a question from a field name for validation purposes
-     */
-    private function createQuestionFromField(string $field): string
-    {
-        // Convert field name to a question format
-        $question = "What is your " . strtolower($field) . "?";
-        
-        // Handle common field types with better questions
-        $fieldLower = strtolower($field);
-        if (str_contains($fieldLower, 'name')) {
-            $question = "What is your name?";
-        } elseif (str_contains($fieldLower, 'email')) {
-            $question = "What is your email address?";
-        } elseif (str_contains($fieldLower, 'phone')) {
-            $question = "What is your phone number?";
-        } elseif (str_contains($fieldLower, 'age')) {
-            $question = "What is your age?";
-        } elseif (str_contains($fieldLower, 'address')) {
-            $question = "What is your address?";
-        }
-        
-        return $question;
-    }
 
     /**
      * Get validation guidance for the AI based on validation rules
@@ -292,7 +268,7 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
     private function getValidationGuidance(string $sessionId, string $fieldName, ValidationResult $validationResult): string
     {
         $fieldDefinitions = $this->getSessionFieldDefinitions($sessionId);
-        
+
         // Find the field definition
         foreach ($fieldDefinitions as $def) {
             if ($def->name === $fieldName && $def->hasValidationRules()) {
@@ -300,7 +276,7 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
                 return "The validation rules for this field are: {$rules}. ";
             }
         }
-        
+
         return "";
     }
 
@@ -310,11 +286,12 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
     public function validateUserInput(string $sessionId, string $fieldName, string $userMessage): ValidationResult
     {
         $fieldDefinitions = $this->getSessionFieldDefinitions($sessionId);
-        
+
         // Step 1: AI Validation (always performed)
-        $question = $this->createQuestionFromField($fieldName);
+        // Create a simple question for validation purposes
+        $question = "What is your " . strtolower($fieldName) . "?";
         $aiValidationPassed = $this->validateUserAnswer($question, $userMessage);
-        
+
         if (!$aiValidationPassed) {
             return ValidationResult::failure(
                 [],
@@ -325,10 +302,10 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
 
         // Step 2: Laravel Validation (if rules exist for this field)
         $validationRules = $this->getFieldValidationRules($fieldName, $fieldDefinitions);
-        
+
         if (!empty($validationRules)) {
             $laravelResult = $this->validateWithLaravel($fieldName, $userMessage, $validationRules);
-            
+
             if (!$laravelResult->isValid) {
                 return $laravelResult;
             }
