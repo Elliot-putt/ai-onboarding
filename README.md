@@ -172,6 +172,171 @@ $agent->configureFields(['name', 'email', 'company']);
 $result = $agent->beginConversation();
 ```
 
+### Registering Your Custom Provider
+
+The easiest way to register your custom AI provider is through your Laravel application's `AppServiceProvider`. This approach keeps your package integration clean and follows Laravel best practices.
+
+**Step 1: Create your provider class** (as shown above)
+
+**Step 2: Register in `AppServiceProvider`:**
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Support\ServiceProvider;
+use ElliotPutt\LaravelAiOnboarding\Services\AIProviderRegistry;
+use App\Providers\YourAIProvider;
+use App\Services\YourAIService;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        // Register your custom AI provider
+        $this->app->afterResolving(AIProviderRegistry::class, function (AIProviderRegistry $registry) {
+            $registry->register('custom', new YourAIProvider(
+                app(YourAIService::class)
+            ));
+        });
+    }
+
+    public function boot(): void
+    {
+        // Your other boot logic here
+    }
+}
+```
+
+**Step 3: Configure your AI service** in `config/services.php`:
+
+```php
+return [
+    // ... other services
+    
+    'your-ai-service' => [
+        'api_key' => env('YOUR_AI_API_KEY'),
+        'base_uri' => env('YOUR_AI_BASE_URI'),
+    ],
+];
+```
+
+**Step 4: Set environment variables** in your `.env`:
+
+```env
+# AI Onboarding Configuration
+AI_ONBOARDING_CUSTOM_PROVIDER=App\Providers\YourAIProvider
+
+# Your AI Service Configuration
+YOUR_AI_API_KEY=your_api_key_here
+YOUR_AI_BASE_URI=https://your-ai-service.com/api
+```
+
+ Your custom AI provider will be automatically detected and used by the package. No need to modify any package files or configurations.
+
+### AIProviderInterface Contract
+
+Your custom AI provider must implement the `AIProviderInterface` contract. Here's the complete interface you need to implement:
+
+```php
+<?php
+
+namespace ElliotPutt\LaravelAiOnboarding\Contracts;
+
+interface AIProviderInterface
+{
+    /**
+     * Send a prompt to the AI and get response
+     * 
+     * @param string $systemPrompt The system/context prompt for the AI
+     * @param string $userPrompt The user's message/prompt
+     * @return string The AI's response
+     */
+    public function generateResponse(string $systemPrompt, string $userPrompt): string;
+
+    /**
+     * Get the provider name
+     * 
+     * @return string A unique name for your provider
+     */
+    public function getName(): string;
+
+    /**
+     * Validate the provider configuration
+     * 
+     * @param array $config Configuration array to validate
+     * @return bool True if configuration is valid
+     */
+    public function validateConfig(array $config): bool;
+}
+```
+
+### Required Methods Explained
+
+#### `generateResponse(string $systemPrompt, string $userPrompt): string`
+This is the main method that handles AI communication:
+- **`$systemPrompt`**: Contains the AI instructions and context (e.g., "You are a helpful onboarding assistant...")
+- **`$userPrompt`**: The user's actual message (e.g., "John Smith" or "What should I put for email?")
+- **Returns**: The AI's response as a string
+
+#### `getName(): string`
+Returns a unique identifier for your provider:
+- Used internally by the package for identification
+- Should be a simple string like `'street-ai'` or `'my-custom-ai'`
+
+#### `validateConfig(array $config): bool`
+Validates your provider's configuration:
+- Checks if required configuration keys are present
+- Returns `true` if valid, `false` if invalid
+- Used for configuration validation
+
+### Complete Example Implementation
+
+Here's a complete example showing how to implement all three methods:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use ElliotPutt\LaravelAiOnboarding\Contracts\AIProviderInterface;
+use App\Services\YourAIService;
+
+class YourAIProvider implements AIProviderInterface
+{
+    public function __construct(
+        private YourAIService $aiService
+    ) {}
+
+    public function generateResponse(string $systemPrompt, string $userPrompt): string
+    {
+        // Call your AI service with the prompts
+        $response = $this->aiService->generateContent([
+            'context' => $systemPrompt,    // System prompt becomes context
+            'message' => $userPrompt,      // User prompt becomes message
+        ]);
+
+        // Extract and return the AI's response
+        return $response['content'] ?? $response['text'] ?? 'No response from AI service.';
+    }
+
+    public function getName(): string
+    {
+        return 'your-ai-provider';
+    }
+
+    public function validateConfig(array $config): bool
+    {
+        // Validate that required configuration keys exist
+        return isset($config['api_key']) && 
+               isset($config['base_uri']) && 
+               !empty($config['api_key']) && 
+               !empty($config['base_uri']);
+    }
+}
+```
+
 ## Quick Start
 
 ### Modern API with Laravel Validation (Recommended)
