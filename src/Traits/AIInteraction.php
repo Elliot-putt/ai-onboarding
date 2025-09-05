@@ -46,14 +46,14 @@ trait AIInteraction
      */
     protected function getAIProvider(): AIProviderInterface|array
     {
-        $config = config('ai-onboarding');
-        
-        // If custom provider is configured, use it
-        if (isset($config['custom_provider_class'])) {
+        // Check if a custom provider is registered
+        $availableProviders = $this->getProviderRegistry()->getAvailableProviders();
+        if (in_array('custom', $availableProviders)) {
             return $this->getProviderRegistry()->getProvider('custom');
         }
 
         // Otherwise use the specified model or default
+        $config = config('ai-onboarding');
         $modelKey = $this->aiModel ?? $config['default_model'] ?? 'openai';
         return $this->getPrismClient($modelKey);
     }

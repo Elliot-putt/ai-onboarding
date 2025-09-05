@@ -44,7 +44,6 @@ return [
     | No need to set default_model to 'custom' - it's automatic!
     |
     */
-    'custom_provider_class' => env('AI_ONBOARDING_CUSTOM_PROVIDER'),
 
     /*
     |--------------------------------------------------------------------------

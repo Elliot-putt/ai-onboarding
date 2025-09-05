@@ -38,25 +38,6 @@ class AIProviderRegistry
             return;
         }
         
-        $this->autoDiscoverProviders();
         $this->initialized = true;
-    }
-    
-    protected function autoDiscoverProviders(): void
-    {
-        $config = config('ai-onboarding');
-        
-        // Check if there's a custom provider configured
-        if (isset($config['custom_provider_class'])) {
-            $providerClass = $config['custom_provider_class'];
-            
-            if (class_exists($providerClass)) {
-                $provider = App::make($providerClass);
-                
-                if ($provider instanceof AIProviderInterface) {
-                    $this->register('custom', $provider);
-                }
-            }
-        }
     }
 }

@@ -133,11 +133,6 @@ class AppServiceProvider extends ServiceProvider
 ],
 ```
 
-4. **Set the custom provider** in your `.env`:
-
-```env
-AI_ONBOARDING_CUSTOM_PROVIDER=App\Providers\YourAIProvider
-```
 
 ### How It Works
 
@@ -222,18 +217,15 @@ return [
 ];
 ```
 
-**Step 4: Set environment variables** in your `.env`:
+**Step 4: Set your AI service environment variables** in your `.env`:
 
 ```env
-# AI Onboarding Configuration
-AI_ONBOARDING_CUSTOM_PROVIDER=App\Providers\YourAIProvider
-
 # Your AI Service Configuration
 YOUR_AI_API_KEY=your_api_key_here
 YOUR_AI_BASE_URI=https://your-ai-service.com/api
 ```
 
- Your custom AI provider will be automatically detected and used by the package. No need to modify any package files or configurations.
+Your custom AI provider will be automatically detected and used by the package. No need to modify any package files or configurations.
 
 ### AIProviderInterface Contract
 
