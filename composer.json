@@ -3,6 +3,7 @@
     "description": "A Laravel package for AI-powered onboarding flows with configurable field extraction - pure library with no web routes",
     "type": "library",
     "license": "MIT",
+    "version": "1.0.0",
     "authors": [
         {
             "name": "Elliot Putt",
