@@ -243,6 +243,10 @@ class OnboardingAgent implements OnboardingAgentCoreInterface
             );
         }
 
+        \Log::info($this->getSessionFields($sessionId));
+        \Log::info($this->getSessionFieldDefinitions($sessionId));
+        \Log::info($fields);
+        \Log::info($nextQuestionIndex);
         if ($nextQuestionIndex < count($fields)) {
             // There are more fields to ask
             $nextField = $fields[$nextQuestionIndex];
